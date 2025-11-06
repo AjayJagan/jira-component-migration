@@ -18,7 +18,6 @@ readonly NC='\033[0m' # No Color
 
 # Default values
 JIRA_URL="${JIRA_URL:-https://issues.redhat.com}"
-BOT_EMAIL="${BOT_EMAIL:-}"
 BOT_TOKEN="${BOT_TOKEN:-}"
 SOURCE_PROJECT="${SOURCE_PROJECT:-RHOAISTRAT}"
 DEST_PROJECT="${DEST_PROJECT:-RHAISTRAT}"
@@ -56,6 +55,11 @@ print_header() {
     echo -e "${BLUE}========================================${NC}"
 }
 
+# Helper function to make authenticated curl requests with Bearer token
+jira_curl() {
+    curl "$@" -H "Authorization: Bearer ${BOT_TOKEN}"
+}
+
 # Show usage information
 usage() {
     cat << EOF
@@ -68,33 +72,30 @@ OPTIONS:
     -d, --dry-run           Perform a dry run without making changes
     -s, --skip-backup       Skip backup step (not recommended)
     -u, --jira-url URL      JIRA instance URL (default: https://issues.redhat.com)
-    -e, --email EMAIL       Bot account email
-    -t, --token TOKEN       Bot account token
+    -t, --token TOKEN       Bearer token for authentication
     --source PROJECT        Source project key (default: RHOAISTRAT)
     --dest PROJECT          Destination project key (default: RHAISTRAT)
     --delay SECONDS         Delay between API calls (default: 2)
 
 ENVIRONMENT VARIABLES:
     JIRA_URL                JIRA instance URL
-    BOT_EMAIL               Bot account email
-    BOT_TOKEN               Bot account token
+    BOT_TOKEN               Bearer token for authentication
     SOURCE_PROJECT          Source project key
     DEST_PROJECT            Destination project key
 
 EXAMPLES:
-    # Interactive mode (prompts for credentials)
+    # Interactive mode (prompts for token)
     $0
 
-    # With environment variables
-    export BOT_EMAIL="bot@redhat.com"
-    export BOT_TOKEN="your-token"
+    # With environment variable
+    export BOT_TOKEN="your-bearer-token"
     $0
 
     # Dry run to preview changes
     $0 --dry-run
 
     # With command line arguments
-    $0 -e bot@redhat.com -t your-token --source RHOAISTRAT --dest RHAISTRAT
+    $0 -t your-bearer-token --source RHOAISTRAT --dest RHAISTRAT
 
 EOF
     exit 0
@@ -117,10 +118,6 @@ parse_args() {
                 ;;
             -u|--jira-url)
                 JIRA_URL="$2"
-                shift 2
-                ;;
-            -e|--email)
-                BOT_EMAIL="$2"
                 shift 2
                 ;;
             -t|--token)
@@ -149,12 +146,8 @@ parse_args() {
 
 # Prompt for missing credentials
 prompt_credentials() {
-    if [[ -z "$BOT_EMAIL" ]]; then
-        read -r -p "Bot Email: " BOT_EMAIL
-    fi
-
     if [[ -z "$BOT_TOKEN" ]]; then
-        read -r -s -p "Bot Token: " BOT_TOKEN
+        read -r -s -p "Bearer Token: " BOT_TOKEN
         echo ""
     fi
 }
@@ -179,8 +172,8 @@ validate_prerequisites() {
     print_success "Required commands available: curl, jq"
 
     # Validate credentials
-    if [[ -z "$BOT_EMAIL" ]] || [[ -z "$BOT_TOKEN" ]]; then
-        print_error "Bot credentials are required"
+    if [[ -z "$BOT_TOKEN" ]]; then
+        print_error "Bearer token is required"
         exit 1
     fi
     print_success "Credentials provided"
@@ -190,7 +183,7 @@ validate_prerequisites() {
     local response
     local http_code
 
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/myself" 2>&1)
 
@@ -205,7 +198,7 @@ validate_prerequisites() {
 
     # Validate source project exists
     print_info "Validating source project: ${SOURCE_PROJECT}"
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/project/${SOURCE_PROJECT}" 2>&1)
 
@@ -219,7 +212,7 @@ validate_prerequisites() {
 
     # Validate destination project exists
     print_info "Validating destination project: ${DEST_PROJECT}"
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/project/${DEST_PROJECT}" 2>&1)
 
@@ -263,7 +256,7 @@ backup_source_components() {
     local response
     local http_code
 
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/project/${SOURCE_PROJECT}/components" 2>&1)
 
@@ -292,7 +285,7 @@ fetch_destination_components() {
     local response
     local http_code
 
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/project/${DEST_PROJECT}/components" 2>&1)
 
@@ -405,7 +398,7 @@ migrate_components() {
             local response
             local http_code
 
-            response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+            response=$(jira_curl -s -w "\n%{http_code}" \
                 -H "Content-Type: application/json" \
                 -H "Accept: application/json" \
                 -X POST \
@@ -466,7 +459,7 @@ verify_migration() {
     local response
     local http_code
 
-    response=$(curl -s -w "\n%{http_code}" -u "${BOT_EMAIL}:${BOT_TOKEN}" \
+    response=$(jira_curl -s -w "\n%{http_code}" \
         -H "Accept: application/json" \
         "${JIRA_URL}/rest/api/2/project/${DEST_PROJECT}/components" 2>&1)
 
@@ -622,7 +615,6 @@ main() {
     # Show configuration
     print_info "Configuration:"
     echo "  JIRA URL: ${JIRA_URL}"
-    echo "  Bot Email: ${BOT_EMAIL}"
     echo "  Source Project: ${SOURCE_PROJECT}"
     echo "  Destination Project: ${DEST_PROJECT}"
     echo "  Dry Run: ${DRY_RUN}"

@@ -50,12 +50,14 @@ You'll need a JIRA bot account with:
 - **Read access** to the source project
 - **Admin access** to the destination project (to create components)
 
-**To create a JIRA API token:**
+**To create a JIRA Personal Access Token (PAT):**
 1. Log into [JIRA](https://issues.redhat.com) with your bot account
 2. Navigate to [Profile Settings](https://issues.redhat.com/secure/ViewProfile.jspa)
-3. Select "Personal Access Tokens" or "API Tokens"
+3. Select "Personal Access Tokens"
 4. Click "Create token"
-5. Copy and securely store the token
+5. Copy and securely store the token (it will only be shown once!)
+
+**Note:** This script uses Bearer token authentication. Your PAT will be used as a Bearer token in the `Authorization` header.
 
 ## Quick Start
 
@@ -65,11 +67,10 @@ You'll need a JIRA bot account with:
 chmod +x migrate-jira-components.sh
 ```
 
-### 2. Set Credentials (Recommended Method)
+### 2. Set Your Token
 
 ```bash
-export BOT_EMAIL="your-bot@redhat.com"
-export BOT_TOKEN="your-api-token-here"
+export BOT_TOKEN="your-bearer-token-here"
 ```
 
 ### 3. Run Dry Run First
@@ -112,8 +113,7 @@ cd ..
 #### Option 1: Environment Variables (Recommended - Most Secure)
 
 ```bash
-export BOT_EMAIL="your-bot@redhat.com"
-export BOT_TOKEN="your-api-token-here"
+export BOT_TOKEN="your-bearer-token-here"
 export SOURCE_PROJECT="RHOAISTRAT"  # Optional, defaults to RHOAISTRAT
 export DEST_PROJECT="RHAISTRAT"     # Optional, defaults to RHAISTRAT
 export JIRA_URL="https://issues.redhat.com"  # Optional
@@ -123,8 +123,7 @@ export JIRA_URL="https://issues.redhat.com"  # Optional
 
 ```bash
 ./migrate-jira-components.sh \
-  --email "your-bot@redhat.com" \
-  --token "your-api-token-here" \
+  --token "your-bearer-token-here" \
   --source "RHOAISTRAT" \
   --dest "RHAISTRAT"
 ```
@@ -132,7 +131,7 @@ export JIRA_URL="https://issues.redhat.com"  # Optional
 #### Option 3: Interactive Prompts
 
 ```bash
-# Script will prompt for any missing information
+# Script will prompt for the token if not provided
 ./migrate-jira-components.sh
 ```
 
@@ -141,8 +140,7 @@ export JIRA_URL="https://issues.redhat.com"  # Optional
 ```bash
 ./migrate-jira-components.sh \
   --jira-url "https://issues.redhat.com" \
-  --email "bot@redhat.com" \
-  --token "your-token" \
+  --token "your-bearer-token" \
   --source "RHOAISTRAT" \
   --dest "RHAISTRAT" \
   --delay 2 \              # Delay between API calls (seconds)
@@ -156,8 +154,7 @@ export JIRA_URL="https://issues.redhat.com"  # Optional
 
 ```bash
 # 1. Set credentials
-export BOT_EMAIL="bot@redhat.com"
-export BOT_TOKEN="your-token"
+export BOT_TOKEN="your-bearer-token"
 
 # 2. Dry run first
 ./migrate-jira-components.sh --dry-run
@@ -270,10 +267,10 @@ The dry run performs all validation and detection steps WITHOUT creating any com
 **Fix**:
 ```bash
 # Test credentials manually
-curl -u "your-email:your-token" \
+curl -H "Authorization: Bearer your-bearer-token" \
   https://issues.redhat.com/rest/api/2/myself
 
-# If this fails, regenerate your API token
+# If this fails, regenerate your PAT
 ```
 
 ### "Source project RHOAISTRAT not found"
@@ -283,7 +280,7 @@ curl -u "your-email:your-token" \
 **Fix**:
 ```bash
 # Verify project exists
-curl -u "your-email:your-token" \
+curl -H "Authorization: Bearer your-bearer-token" \
   https://issues.redhat.com/rest/api/2/project/RHOAISTRAT
 
 # Check project key is correct (case-sensitive!)
@@ -336,7 +333,7 @@ chmod +x migrate-jira-components.sh
 
 1. **Never commit credentials** to git repositories
 2. **Use environment variables** instead of command-line args (avoids bash history)
-3. **Rotate API tokens** regularly
+3. **Rotate Bearer tokens (PATs)** regularly
 4. **Limit bot account permissions** to only what's needed
 5. **Delete migration directories** after successful migration if they contain sensitive data
 
@@ -344,6 +341,8 @@ chmod +x migrate-jira-components.sh
 # Clean up after successful migration
 rm -rf jira_migration_*/
 ```
+
+**Note:** The script uses Bearer token authentication. Your Personal Access Token (PAT) is sent in the `Authorization: Bearer` header for all API requests.
 
 ## Post-Migration Checklist
 
@@ -393,10 +392,14 @@ After successful component migration:
 
 ```bash
 # Basic dry run
+export BOT_TOKEN="your-bearer-token"
 ./migrate-jira-components.sh --dry-run
 
 # Actual migration
 ./migrate-jira-components.sh
+
+# With command line token
+./migrate-jira-components.sh --token "your-bearer-token" --dry-run
 
 # With custom delay
 ./migrate-jira-components.sh --delay 3
