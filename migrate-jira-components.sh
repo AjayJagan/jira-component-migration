@@ -17,6 +17,7 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Default values
+CONFIG_FILE="${CONFIG_FILE:-.jira-migration.conf}"
 JIRA_URL="${JIRA_URL:-https://issues.redhat.com}"
 BOT_TOKEN="${BOT_TOKEN:-}"
 SOURCE_PROJECT="${SOURCE_PROJECT:-RHOAISTRAT}"
@@ -25,6 +26,7 @@ MIGRATION_DATE=$(date +%Y%m%d_%H%M%S)
 MIGRATION_DIR="jira_migration_${MIGRATION_DATE}"
 DRY_RUN=false
 SKIP_BACKUP=false
+FORCE_CONFIRM=false
 RATE_LIMIT_DELAY=2
 
 #=============================================================================
@@ -55,6 +57,45 @@ print_header() {
     echo -e "${BLUE}========================================${NC}"
 }
 
+# Show progress with percentage and progress bar
+show_progress() {
+    local current=$1
+    local total=$2
+    local component_name=$3
+    local percent=$((current * 100 / total))
+    local progress_width=30
+    local filled=$((percent * progress_width / 100))
+    local empty=$((progress_width - filled))
+
+    # Build progress bar
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    # Truncate component name if too long
+    local display_name="$component_name"
+    if [[ ${#display_name} -gt 35 ]]; then
+        display_name="${display_name:0:32}..."
+    fi
+
+    printf "\r${BLUE}ℹ${NC} [%3d%%] [%d/%d] %s %-35s" "$percent" "$current" "$total" "$bar" "$display_name"
+}
+
+# Show a simple spinner for operations without discrete progress
+show_spinner() {
+    local pid=$1
+    local message=$2
+    local spin='-\|/'
+    local i=0
+
+    printf "${BLUE}ℹ${NC} %s " "$message"
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${BLUE}ℹ${NC} %s %c" "$message" "${spin:i++%${#spin}:1}"
+        sleep 0.1
+    done
+    printf "\r${BLUE}ℹ${NC} %s ✓\n" "$message"
+}
+
 # Helper function to make authenticated curl requests with Bearer token
 jira_curl() {
     curl "$@" -H "Authorization: Bearer ${BOT_TOKEN}"
@@ -65,40 +106,147 @@ usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Migrate JIRA components from RHOAISTRAT to RHAISTRAT project.
+Migrate JIRA components between projects with comprehensive conflict detection,
+backup, verification, and rollback capabilities.
 
 OPTIONS:
     -h, --help              Show this help message
+    -c, --config FILE       Configuration file (default: .jira-migration.conf)
     -d, --dry-run           Perform a dry run without making changes
+    -f, --force             Skip interactive confirmation (for automation)
     -s, --skip-backup       Skip backup step (not recommended)
     -u, --jira-url URL      JIRA instance URL (default: https://issues.redhat.com)
     -t, --token TOKEN       Bearer token for authentication
-    --source PROJECT        Source project key (default: RHOAISTRAT)
-    --dest PROJECT          Destination project key (default: RHAISTRAT)
-    --delay SECONDS         Delay between API calls (default: 2)
+    --source PROJECT        Source project key
+    --dest PROJECT          Destination project key
+    --delay SECONDS         Rate limit delay between API calls (default: 2)
 
 ENVIRONMENT VARIABLES:
     JIRA_URL                JIRA instance URL
     BOT_TOKEN               Bearer token for authentication
     SOURCE_PROJECT          Source project key
     DEST_PROJECT            Destination project key
+    FORCE_CONFIRM           Skip confirmation (true/false)
+    RATE_LIMIT_DELAY        Delay between API calls in seconds
+
+CONFIGURATION FILE:
+    Create .jira-migration.conf to persist settings:
+
+    JIRA_URL=https://issues.redhat.com
+    BOT_TOKEN=your-bearer-token-here
+    SOURCE_PROJECT=SOURCEPROJ
+    DEST_PROJECT=DESTPROJ
+    RATE_LIMIT_DELAY=2
+    FORCE_CONFIRM=false
 
 EXAMPLES:
-    # Interactive mode (prompts for token)
+
+  Basic Usage:
+    # Interactive mode with prompts
     $0
 
-    # With environment variable
-    export BOT_TOKEN="your-bearer-token"
-    $0
-
-    # Dry run to preview changes
+    # Quick dry-run to preview changes
     $0 --dry-run
 
-    # With command line arguments
-    $0 -t your-bearer-token --source RHOAISTRAT --dest RHAISTRAT
+    # Migrate with specific projects
+    $0 --source RHOAISTRAT --dest RHAISTRAT --dry-run
+
+  Configuration File Approach (Recommended):
+    # 1. Create config file
+    cp .jira-migration.conf.example .jira-migration.conf
+    # 2. Edit with your settings
+    vim .jira-migration.conf
+    # 3. Run migration
+    $0 --dry-run
+    $0  # Live migration after reviewing dry-run
+
+  Environment Variables:
+    export BOT_TOKEN="your-bearer-token-here"
+    export SOURCE_PROJECT="RHOAIRFE"
+    export DEST_PROJECT="RHAISTRAT"
+    $0 --dry-run
+
+  Automation/CI-CD:
+    # Non-interactive automation-friendly execution
+    $0 --config /path/to/prod.conf --force --source PROJ1 --dest PROJ2
+
+    # With custom rate limiting for busy instances
+    $0 --delay 5 --force --dry-run
+
+  Troubleshooting:
+    # Test connectivity and permissions only
+    $0 --dry-run --source TESTPROJ --dest TESTPROJ
+
+    # Migration with verbose logging (check migration logs)
+    $0 --dry-run && cat jira_migration_*/migration_log.txt
+
+WORKFLOW:
+  1. Always run with --dry-run first to preview changes
+  2. Review conflicts.txt and migration_report.txt in output directory
+  3. Run actual migration after confirming dry-run results
+  4. Verify component mappings in component_mapping.csv
+
+OUTPUT FILES (saved in jira_migration_YYYYMMDD_HHMMSS/):
+  - migration_report.txt      : Summary and statistics
+  - migration_log.txt         : Detailed operation log
+  - component_mapping.csv     : Source to destination ID mappings
+  - conflicts.txt            : Components skipped due to naming conflicts
+  - source_components.json    : Full backup of source components
+  - dest_components_*.json    : Destination state before/after migration
+
+REAL-WORLD EXAMPLES:
+  # Migrate RHOAISTRAT components to RHAISTRAT (17 components migrated)
+  $0 --source RHOAISTRAT --dest RHAISTRAT --dry-run
+
+  # Migrate RHOAIRFE components to RHAISTRAT (16 components migrated)
+  $0 --source RHOAIRFE --dest RHAISTRAT --dry-run
+
+For support: https://github.com/AjayJagan/jira-component-migration/issues
 
 EOF
     exit 0
+}
+
+# Load configuration from file
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        print_info "Loading configuration from $CONFIG_FILE"
+        # Source the config file safely
+        while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ $key =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$key" ]] && continue
+
+            # Remove leading/trailing whitespace
+            key=$(echo "$key" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            value=$(echo "$value" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+
+            # Remove quotes from value if present
+            value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
+
+            # Set valid configuration variables
+            case "$key" in
+                JIRA_URL)
+                    JIRA_URL="$value"
+                    ;;
+                BOT_TOKEN)
+                    BOT_TOKEN="$value"
+                    ;;
+                SOURCE_PROJECT)
+                    SOURCE_PROJECT="$value"
+                    ;;
+                DEST_PROJECT)
+                    DEST_PROJECT="$value"
+                    ;;
+                RATE_LIMIT_DELAY)
+                    RATE_LIMIT_DELAY="$value"
+                    ;;
+                FORCE_CONFIRM)
+                    FORCE_CONFIRM="$value"
+                    ;;
+            esac
+        done < "$CONFIG_FILE"
+    fi
 }
 
 # Parse command line arguments
@@ -108,8 +256,16 @@ parse_args() {
             -h|--help)
                 usage
                 ;;
+            -c|--config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
             -d|--dry-run)
                 DRY_RUN=true
+                shift
+                ;;
+            -f|--force|--auto-confirm)
+                FORCE_CONFIRM=true
                 shift
                 ;;
             -s|--skip-backup)
@@ -166,7 +322,30 @@ validate_prerequisites() {
 
     if [[ ${#missing_commands[@]} -gt 0 ]]; then
         print_error "Missing required commands: ${missing_commands[*]}"
-        print_info "Please install: ${missing_commands[*]}"
+        echo ""
+        print_info "Installation instructions:"
+
+        for cmd in "${missing_commands[@]}"; do
+            case "$cmd" in
+                jq)
+                    echo "  • jq (JSON processor):"
+                    echo "    - macOS: brew install jq"
+                    echo "    - Ubuntu/Debian: sudo apt-get install jq"
+                    echo "    - RHEL/CentOS: sudo yum install jq"
+                    echo "    - Alpine: apk add jq"
+                    ;;
+                curl)
+                    echo "  • curl (HTTP client):"
+                    echo "    - macOS: Usually pre-installed, or brew install curl"
+                    echo "    - Ubuntu/Debian: sudo apt-get install curl"
+                    echo "    - RHEL/CentOS: sudo yum install curl"
+                    echo "    - Alpine: apk add curl"
+                    ;;
+            esac
+            echo ""
+        done
+
+        print_info "After installing missing dependencies, please run the script again."
         exit 1
     fi
     print_success "Required commands available: curl, jq"
@@ -174,6 +353,18 @@ validate_prerequisites() {
     # Validate credentials
     if [[ -z "$BOT_TOKEN" ]]; then
         print_error "Bearer token is required"
+        echo ""
+        print_info "How to provide your Bearer Token:"
+        echo "  • Environment variable: export BOT_TOKEN=\"your-token-here\""
+        echo "  • Command line flag: ./migrate-jira-components.sh -t \"your-token-here\""
+        echo "  • Configuration file: Add BOT_TOKEN=your-token-here to .jira-migration.conf"
+        echo ""
+        print_info "How to generate a Bearer Token in JIRA:"
+        echo "  1. Go to: ${JIRA_URL}/secure/ViewProfile.jspa"
+        echo "  2. Click 'Personal Access Tokens'"
+        echo "  3. Click 'Create token'"
+        echo "  4. Give it a name and select appropriate permissions"
+        echo "  5. Copy the generated token"
         exit 1
     fi
     print_success "Credentials provided"
@@ -191,7 +382,38 @@ validate_prerequisites() {
 
     if [[ "$http_code" != "200" ]]; then
         print_error "Authentication failed (HTTP ${http_code})"
-        print_error "Please check your credentials and JIRA URL"
+        echo ""
+
+        case "$http_code" in
+            401)
+                print_info "Troubleshooting HTTP 401 (Unauthorized):"
+                echo "  • Check that your Bearer Token is valid and not expired"
+                echo "  • Verify the token has the required permissions"
+                echo "  • Ensure you're using a Personal Access Token, not a password"
+                ;;
+            403)
+                print_info "Troubleshooting HTTP 403 (Forbidden):"
+                echo "  • Your token is valid but lacks required permissions"
+                echo "  • Check that your account has access to both projects"
+                echo "  • Verify project keys: ${SOURCE_PROJECT} and ${DEST_PROJECT}"
+                ;;
+            404)
+                print_info "Troubleshooting HTTP 404 (Not Found):"
+                echo "  • Check the JIRA URL: ${JIRA_URL}"
+                echo "  • Verify this is the correct JIRA instance"
+                echo "  • Ensure the /rest/api/2/myself endpoint is available"
+                ;;
+            *)
+                print_info "Troubleshooting HTTP ${http_code}:"
+                echo "  • Check your network connection"
+                echo "  • Verify JIRA instance is accessible: ${JIRA_URL}"
+                echo "  • Try accessing JIRA in a web browser"
+                echo "  • Check for proxy or firewall restrictions"
+                ;;
+        esac
+
+        echo ""
+        print_info "For more details, check the response above for specific error messages."
         exit 1
     fi
     print_success "Successfully authenticated to JIRA"
@@ -365,7 +587,8 @@ migrate_components() {
         local source_id=$(echo "$component" | jq -r '.id')
 
         echo ""
-        print_info "[${current}/${total}] Processing: ${name}"
+        show_progress "$current" "$total" "$name"
+        echo ""
 
         # Check for conflicts
         if grep -Fxq "$name" conflicts.txt 2>/dev/null; then
@@ -429,10 +652,20 @@ migrate_components() {
         fi
     done
 
+    # Clear progress line and show completion
+    printf "\r%80s\r" ""  # Clear the progress line
+    print_success "Component processing completed!"
+
     # Read final counts from files
-    succeeded=$(grep -c "^SUCCESS" migration_log.txt 2>/dev/null || echo 0)
-    failed=$(grep -c "^FAILED" migration_log.txt 2>/dev/null || echo 0)
-    skipped=$(grep -c "^SKIP" migration_log.txt 2>/dev/null || echo 0)
+    if [[ -f migration_log.txt ]]; then
+        succeeded=$(grep -c "^SUCCESS" migration_log.txt)
+        failed=$(grep -c "^FAILED" migration_log.txt)
+        skipped=$(grep -c "^SKIP" migration_log.txt)
+    else
+        succeeded=0
+        failed=0
+        skipped=0
+    fi
 
     echo ""
     print_header "Migration Results"
@@ -506,10 +739,22 @@ Migration Statistics
 EOF
 
     if [[ -f migration_log.txt ]]; then
-        local total=$(jq 'length' source_components.json 2>/dev/null || echo 0)
-        local succeeded=$(grep -c "^SUCCESS" migration_log.txt 2>/dev/null || echo 0)
-        local failed=$(grep -c "^FAILED" migration_log.txt 2>/dev/null || echo 0)
-        local skipped=$(grep -c "^SKIP" migration_log.txt 2>/dev/null || echo 0)
+        local total
+        local succeeded
+        local failed
+        local skipped
+
+        # Get total count safely
+        if [[ -f source_components.json ]]; then
+            total=$(jq 'length' source_components.json)
+        else
+            total=0
+        fi
+
+        # Get counts from migration log safely
+        succeeded=$(grep -c "^SUCCESS" migration_log.txt)
+        failed=$(grep -c "^FAILED" migration_log.txt)
+        skipped=$(grep -c "^SKIP" migration_log.txt)
 
         cat >> "$report_file" << EOF
 Total Source Components: ${total}
@@ -598,16 +843,19 @@ main() {
     # Set up cleanup trap
     trap cleanup EXIT
 
-    # Print banner
+    # Load configuration file
+    load_config
+
+    # Parse arguments
+    parse_args "$@"
+
+    # Print banner (after config and args are loaded)
     echo ""
     echo "========================================="
     echo "  JIRA Component Migration Tool"
     echo "  ${SOURCE_PROJECT} → ${DEST_PROJECT}"
     echo "========================================="
     echo ""
-
-    # Parse arguments
-    parse_args "$@"
 
     # Prompt for credentials if not provided
     prompt_credentials
@@ -622,10 +870,14 @@ main() {
     echo ""
 
     if [[ "$DRY_RUN" != true ]]; then
-        read -r -p "Continue with migration? [y/N] " response
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            print_info "Migration cancelled"
-            exit 0
+        if [[ "$FORCE_CONFIRM" == true ]]; then
+            print_info "Auto-confirming migration (--force flag used)"
+        else
+            read -r -p "Continue with migration? [y/N] " response
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                print_info "Migration cancelled"
+                exit 0
+            fi
         fi
     fi
 

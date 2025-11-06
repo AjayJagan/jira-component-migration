@@ -1,0 +1,20 @@
+# JIRA Component Migration Configuration File
+# Copy this file to .jira-migration.conf and edit values as needed
+
+# JIRA instance URL
+JIRA_URL=https://issues.redhat.com
+
+# Bearer token for authentication (keep this secure!)
+BOT_TOKEN=your-bearer-token-here
+
+# Source project key
+SOURCE_PROJECT=RHOAISTRAT
+
+# Destination project key
+DEST_PROJECT=RHAISTRAT
+
+# Rate limit delay between API calls (seconds)
+RATE_LIMIT_DELAY=2
+
+# Skip interactive confirmation (true/false)
+FORCE_CONFIRM=false
