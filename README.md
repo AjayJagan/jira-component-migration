@@ -23,6 +23,9 @@ This tool automates the migration of JIRA components from one project to another
 
 - `curl` - for API communication
 - `jq` - for JSON processing
+- **JIRA bot account** with:
+  - **Administrator role** in the destination project (RHAISTRAT) - required to create components
+  - **Read access** to the source project (RHOAISTRAT)
 
 **Installation:**
 
@@ -46,9 +49,14 @@ jq --version
 
 ### JIRA Credentials
 
-You'll need a JIRA bot account with:
-- **Read access** to the source project
-- **Admin access** to the destination project (to create components)
+**IMPORTANT:** The bot account must be added as an **Administrator** to both JIRA projects:
+- **Source project (RHOAISTRAT)**: Read access is sufficient
+- **Destination project (RHAISTRAT)**: Administrator role is **required** to create components
+
+**To add the bot as Administrator:**
+1. Go to JIRA project settings
+2. Navigate to **People** or **Users and Roles**
+3. Add your bot account with the **Administrator** role
 
 **To create a JIRA Personal Access Token (PAT):**
 1. Log into [JIRA](https://issues.redhat.com) with your bot account
